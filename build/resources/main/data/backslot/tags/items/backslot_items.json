@@ -1,8 +1,0 @@
-{
-  "replace": false,
-  "values": [
-    "ratchet:ratchet_driver",
-    "ratchet:heavy_ratchet_driver",
-    "ratchet:overcrank_ratchet_driver"
-  ]
-}

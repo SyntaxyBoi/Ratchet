@@ -1,7 +1,0 @@
-{
-  "parent": "minecraft:item/generated",
-  "textures": {
-    "layer0": "ratchet:item/heavy_ratchet_driver_gui"
-  },
-  "gui_light": "front"
-}

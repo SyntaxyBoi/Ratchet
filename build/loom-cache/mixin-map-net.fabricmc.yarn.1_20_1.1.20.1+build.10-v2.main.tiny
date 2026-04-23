@@ -1,9 +1,0 @@
-v1	named	intermediary
-FIELD	moth/ratchet/mixin/BipedEntityModelRebounderMixin	Lnet/minecraft/client/model/ModelPart;	leftArm	field_27433
-FIELD	moth/ratchet/mixin/BipedEntityModelRebounderMixin	Lnet/minecraft/client/model/ModelPart;	rightArm	field_3401
-FIELD	moth/ratchet/mixin/BipedEntityModelRebounderMixin	Lnet/minecraft/client/model/ModelPart;	head	field_3398
-FIELD	moth/ratchet/mixin/ClientPlayerInteractionManagerRebounderMixin	Lnet/minecraft/client/MinecraftClient;	client	field_3712
-FIELD	moth/ratchet/mixin/ItemRendererMixin	Lnet/minecraft/client/render/item/ItemModels;	models	field_4732
-METHOD	moth/ratchet/mixin/ClientPlayerInteractionManagerRebounderMixin	()V	cancelBlockBreaking	method_2925
-METHOD	moth/ratchet/mixin/ItemRendererMixin	(Lnet/minecraft/item/ItemStack;Lnet/minecraft/world/World;Lnet/minecraft/entity/LivingEntity;I)Lnet/minecraft/client/render/model/BakedModel;	getModel	method_4019
-METHOD	moth/ratchet/mixin/ModelLoaderMixin	(Lnet/minecraft/client/util/ModelIdentifier;)V	addModel	method_4727
