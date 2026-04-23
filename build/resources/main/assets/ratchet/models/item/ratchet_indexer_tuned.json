@@ -1,0 +1,6 @@
+{
+  "parent": "minecraft:item/generated",
+  "textures": {
+    "layer0": "ratchet:item/ratchet_indexer_tuned"
+  }
+}

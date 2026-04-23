@@ -1,0 +1,22 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "moth.ratchet.mixin",
+  "compatibilityLevel": "JAVA_17",
+  "mixins": [
+    "LivingEntityArmorDamageInvoker",
+    "LivingEntityOvercrankDamageMixin",
+    "PlayerAttackDamageSourceMixin",
+    "PlayerAttackOvercrankMixin"
+  ],
+  "client": [
+    "BipedEntityModelRebounderMixin",
+    "ClientPlayerInteractionManagerRebounderMixin",
+    "MinecraftClientRebounderAttackMixin",
+    "ItemRendererMixin",
+    "ModelLoaderMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

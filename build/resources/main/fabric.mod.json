@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "id": "ratchet",
+  "version": "1.0.0",
+  "name": "Ratchet",
+  "description": "Mechanical weapons that store energy to unleash devastating attacks",
+  "authors": [
+    "Moth"
+  ],
+  "contact": {
+    "homepage": "https://modrinth.com/mod/VJk3pfzr"
+  },
+  "license": "CC-BY-SA-4.0",
+  "icon": "assets/ratchet/icon.png",
+  "environment": "*",
+  "depends": {
+    "fabricloader": ">=0.16.10",
+    "minecraft": "~1.20.1",
+    "java": ">=17",
+    "fabric-api": ">=0.92.6+1.20.1"
+  },
+  "suggests": {
+    "backslot": "*"
+  },
+  "entrypoints": {
+    "main": [
+      "moth.ratchet.RatchetMod"
+    ],
+    "client": [
+      "moth.ratchet.client.RatchetClient"
+    ]
+  },
+  "mixins": [
+    "ratchet.mixins.json"
+  ],
+  "custom": {
+    "loom:mods": [
+      {
+        "name": "Ratchet",
+        "value": "ratchet"
+      }
+    ]
+  }
+}

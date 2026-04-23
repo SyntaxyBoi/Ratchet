@@ -1,0 +1,33 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "equipment",
+  "pattern": [
+    "bgg",
+    " np",
+    "s r"
+  ],
+  "key": {
+    "b": {
+      "item": "ratchet:latchet_barrel"
+    },
+    "g": {
+      "item": "minecraft:gold_ingot"
+    },
+    "r": {
+      "item": "ratchet:ratchet_driver"
+    },
+    "n": {
+      "item": "minecraft:netherite_ingot"
+    },
+    "s": {
+      "item": "minecraft:stick"
+    },
+    "p": {
+      "item": "minecraft:netherite_scrap"
+    }
+  },
+  "result": {
+    "item": "ratchet:latchet_rebounder"
+  },
+  "show_notification": true
+}
