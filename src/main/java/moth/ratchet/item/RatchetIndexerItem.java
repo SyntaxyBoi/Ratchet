@@ -2,7 +2,10 @@ package moth.ratchet.item;
 
 import moth.ratchet.RatchetMod;
 import net.minecraft.client.item.TooltipContext;
+import net.minecraft.entity.Entity;
+import net.minecraft.entity.ItemEntity;
 import net.minecraft.entity.LivingEntity;
+import net.minecraft.entity.damage.DamageSource;
 import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
@@ -42,9 +45,8 @@ public class RatchetIndexerItem extends Item {
 
     private static final double CLEAR_RADIUS = 5.0D;
     private static final double UNTUNED_ENTITY_RADIUS = 8.0D;
-    private static final int UNTUNED_COOLDOWN_TICKS = 60;
-    private static final int TUNED_COOLDOWN_TICKS = 100;
-    private static final int MODIFIED_TUNED_COOLDOWN_TICKS = 140;
+    private static final int ACTIVATION_COOLDOWN_TICKS = 25 * 20;
+    private static final int DAMAGE_COOLDOWN_TICKS = 3 * 20;
 
     public RatchetIndexerItem() {
         super(new Settings().maxCount(1));
@@ -68,9 +70,14 @@ public class RatchetIndexerItem extends Item {
 
     @Override
     public Text getName(ItemStack stack) {
-        return isTuned(stack)
-                ? Text.translatable("item.ratchet.ratchet_indexer_tuned")
-                : super.getName(stack);
+        IndexerMode mode = getMode(stack);
+        if (mode == IndexerMode.TUNED) {
+            return Text.translatable("item.ratchet.ratchet_indexer_tuned");
+        }
+        if (mode == IndexerMode.HALF_TUNE) {
+            return Text.translatable("item.ratchet.ratchet_indexer_halftuned");
+        }
+        return super.getName(stack);
     }
 
     @Override
@@ -80,8 +87,9 @@ public class RatchetIndexerItem extends Item {
 
     @Override
     public void appendTooltip(ItemStack stack, @Nullable World world, List<Text> tooltip, TooltipContext context) {
-        tooltip.add(Text.translatable("tooltip.ratchet.ratchet_indexer.mode", Text.translatable(getMode(stack).translationKey()))
-                .formatted(Formatting.AQUA));
+        IndexerMode mode = getMode(stack);
+        tooltip.add(Text.translatable("tooltip.ratchet.ratchet_indexer.mode", Text.translatable(mode.translationKey()))
+                .formatted(mode.formatting()));
 
         if (!hasAnchor(stack)) {
             tooltip.add(Text.translatable("tooltip.ratchet.ratchet_indexer.anchor.unset").formatted(Formatting.GRAY));
@@ -109,6 +117,14 @@ public class RatchetIndexerItem extends Item {
         return getMode(stack) == IndexerMode.TUNED;
     }
 
+    public static boolean isHalfTuned(ItemStack stack) {
+        return getMode(stack) == IndexerMode.HALF_TUNE;
+    }
+
+    public static IndexerMode getIndexerMode(ItemStack stack) {
+        return getMode(stack);
+    }
+
     public static boolean hasStoredAnchor(ItemStack stack) {
         return hasAnchor(stack);
     }
@@ -134,6 +150,16 @@ public class RatchetIndexerItem extends Item {
                 && owner != null
                 && owner.equals(player.getUuid())
                 && anchorDimension.equals(player.getWorld().getRegistryKey().getValue());
+    }
+
+    public static void applyDirectDamageCooldown(PlayerEntity player, DamageSource source, float amount) {
+        if (amount <= 0.0F || player.getWorld().isClient() || !isDirectDamageSource(source)) {
+            return;
+        }
+
+        if (!player.getItemCooldownManager().isCoolingDown(ModItems.RATCHET_INDEXER)) {
+            player.getItemCooldownManager().set(ModItems.RATCHET_INDEXER, DAMAGE_COOLDOWN_TICKS);
+        }
     }
 
     private void setOrClearAnchor(ServerWorld world, PlayerEntity user, ItemStack stack) {
@@ -196,8 +222,13 @@ public class RatchetIndexerItem extends Item {
             return;
         }
 
-        if (getMode(stack) == IndexerMode.UNTUNED) {
+        IndexerMode mode = getMode(stack);
+        if (mode == IndexerMode.UNTUNED) {
             activateUntuned(world, user, anchorPos);
+            return;
+        }
+        if (mode == IndexerMode.HALF_TUNE) {
+            activateHalfTuned(world, user, anchorPos);
             return;
         }
 
@@ -208,7 +239,7 @@ public class RatchetIndexerItem extends Item {
         List<LivingEntity> nearbyEntities = world.getEntitiesByClass(
                 LivingEntity.class,
                 user.getBoundingBox().expand(UNTUNED_ENTITY_RADIUS),
-                entity -> entity.isAlive() && entity != user && !entity.isSpectator()
+                entity -> entity.isAlive() && entity != user && !(entity instanceof PlayerEntity) && !entity.isSpectator()
         );
 
         if (nearbyEntities.isEmpty()) {
@@ -235,27 +266,57 @@ public class RatchetIndexerItem extends Item {
             return;
         }
 
-        user.getItemCooldownManager().set(this, UNTUNED_COOLDOWN_TICKS);
+        user.getItemCooldownManager().set(this, ACTIVATION_COOLDOWN_TICKS);
         user.sendMessage(Text.translatable("message.ratchet.ratchet_indexer.untuned_success", teleportedCount), true);
         playFeedbackSound(world, user, SoundEvents.ENTITY_ENDERMAN_TELEPORT, 0.85F, 1.05F);
     }
 
+    private void activateHalfTuned(ServerWorld world, PlayerEntity user, BlockPos anchorPos) {
+        List<ItemEntity> nearbyItems = world.getEntitiesByClass(
+                ItemEntity.class,
+                user.getBoundingBox().expand(UNTUNED_ENTITY_RADIUS),
+                item -> item.isAlive() && !item.isRemoved()
+        );
+
+        if (nearbyItems.isEmpty()) {
+            sendFeedback(user, "message.ratchet.ratchet_indexer.no_items", SoundEvents.BLOCK_DISPENSER_FAIL, 0.7F, 0.85F);
+            return;
+        }
+
+        int teleportedCount = 0;
+
+        for (ItemEntity item : nearbyItems) {
+            Vec3d destination = RatchetIndexerTeleportHelper.findSafePositionNearAnchor(world, item, anchorPos, null);
+            if (destination == null) {
+                continue;
+            }
+
+            teleportEntity(item, destination);
+            teleportedCount++;
+        }
+
+        if (teleportedCount <= 0) {
+            sendFeedback(user, "message.ratchet.ratchet_indexer.no_safe_location", SoundEvents.BLOCK_DISPENSER_FAIL, 0.7F, 0.8F);
+            return;
+        }
+
+        user.getItemCooldownManager().set(this, ACTIVATION_COOLDOWN_TICKS);
+        user.sendMessage(Text.translatable("message.ratchet.ratchet_indexer.halftuned_success", teleportedCount), true);
+        playFeedbackSound(world, user, SoundEvents.ENTITY_ENDERMAN_TELEPORT, 0.75F, 1.3F);
+    }
+
     private void activateTuned(ServerWorld world, PlayerEntity user, BlockPos anchorPos, ItemStack offhandStack) {
         Vec3d destination;
-        int cooldownTicks;
         String feedbackKey;
 
         if (offhandStack.isOf(Items.GHAST_TEAR)) {
             destination = RatchetIndexerTeleportHelper.findHighestSafePosition(world, user, anchorPos);
-            cooldownTicks = MODIFIED_TUNED_COOLDOWN_TICKS;
             feedbackKey = "message.ratchet.ratchet_indexer.tuned_high_success";
         } else if (offhandStack.isIn(DEPTH_TUNING_ITEMS)) {
             destination = RatchetIndexerTeleportHelper.findLowestSafePosition(world, user, anchorPos);
-            cooldownTicks = MODIFIED_TUNED_COOLDOWN_TICKS;
             feedbackKey = "message.ratchet.ratchet_indexer.tuned_low_success";
         } else {
             destination = RatchetIndexerTeleportHelper.findNearestVerticalPosition(world, user, anchorPos);
-            cooldownTicks = TUNED_COOLDOWN_TICKS;
             feedbackKey = "message.ratchet.ratchet_indexer.tuned_success";
         }
 
@@ -269,19 +330,19 @@ public class RatchetIndexerItem extends Item {
         }
 
         teleportEntity(user, destination);
-        user.getItemCooldownManager().set(this, cooldownTicks);
+        user.getItemCooldownManager().set(this, ACTIVATION_COOLDOWN_TICKS);
         user.sendMessage(Text.translatable(feedbackKey), true);
         playFeedbackSound(world, user, SoundEvents.ITEM_CHORUS_FRUIT_TELEPORT, 0.9F, 1.1F);
     }
 
     private void toggleMode(PlayerEntity user, ItemStack stack) {
-        IndexerMode nextMode = getMode(stack) == IndexerMode.UNTUNED ? IndexerMode.TUNED : IndexerMode.UNTUNED;
+        IndexerMode nextMode = getMode(stack).next();
         setMode(stack, nextMode);
         user.sendMessage(Text.translatable("message.ratchet.ratchet_indexer.mode_toggled", Text.translatable(nextMode.translationKey())), true);
-        playFeedbackSound(user.getWorld(), user, SoundEvents.BLOCK_COMPARATOR_CLICK, 0.75F, nextMode == IndexerMode.TUNED ? 1.2F : 0.85F);
+        playFeedbackSound(user.getWorld(), user, SoundEvents.BLOCK_COMPARATOR_CLICK, 0.75F, nextMode.togglePitch());
     }
 
-    private void teleportEntity(LivingEntity entity, Vec3d destination) {
+    private void teleportEntity(Entity entity, Vec3d destination) {
         World world = entity.getWorld();
         Vec3d origin = entity.getPos();
         entity.stopRiding();
@@ -292,6 +353,11 @@ public class RatchetIndexerItem extends Item {
 
         world.playSound(null, origin.x, origin.y, origin.z, SoundEvents.ITEM_CHORUS_FRUIT_TELEPORT, SoundCategory.PLAYERS, 0.6F, 0.9F);
         world.playSound(null, destination.x, destination.y, destination.z, SoundEvents.ITEM_CHORUS_FRUIT_TELEPORT, SoundCategory.PLAYERS, 0.6F, 1.05F);
+    }
+
+    private static boolean isDirectDamageSource(DamageSource source) {
+        Entity sourceEntity = source.getSource();
+        return sourceEntity != null && sourceEntity == source.getAttacker();
     }
 
     private void sendFeedback(PlayerEntity user, String translationKey, SoundEvent sound, float volume, float pitch) {
@@ -388,16 +454,23 @@ public class RatchetIndexerItem extends Item {
         return nbt.getUuid(ANCHOR_OWNER_KEY);
     }
 
-    private enum IndexerMode {
-        UNTUNED("untuned", "tooltip.ratchet.ratchet_indexer.mode.untuned"),
-        TUNED("tuned", "tooltip.ratchet.ratchet_indexer.mode.tuned");
+    public enum IndexerMode {
+        UNTUNED("untuned", "tooltip.ratchet.ratchet_indexer.mode.untuned", Formatting.AQUA, 0.85F, 0),
+        TUNED("tuned", "tooltip.ratchet.ratchet_indexer.mode.tuned", Formatting.AQUA, 1.2F, 2),
+        HALF_TUNE("half_tune", "tooltip.ratchet.ratchet_indexer.mode.half_tune", Formatting.LIGHT_PURPLE, 1.4F, 1);
 
         private final String nbtName;
         private final String translationKey;
+        private final Formatting formatting;
+        private final float togglePitch;
+        private final int renderPriority;
 
-        IndexerMode(String nbtName, String translationKey) {
+        IndexerMode(String nbtName, String translationKey, Formatting formatting, float togglePitch, int renderPriority) {
             this.nbtName = nbtName;
             this.translationKey = translationKey;
+            this.formatting = formatting;
+            this.togglePitch = togglePitch;
+            this.renderPriority = renderPriority;
         }
 
         public String nbtName() {
@@ -406,6 +479,26 @@ public class RatchetIndexerItem extends Item {
 
         public String translationKey() {
             return this.translationKey;
+        }
+
+        public Formatting formatting() {
+            return this.formatting;
+        }
+
+        public float togglePitch() {
+            return this.togglePitch;
+        }
+
+        public int renderPriority() {
+            return this.renderPriority;
+        }
+
+        public IndexerMode next() {
+            return switch (this) {
+                case UNTUNED -> TUNED;
+                case TUNED -> HALF_TUNE;
+                case HALF_TUNE -> UNTUNED;
+            };
         }
 
         public static IndexerMode fromNbt(String value) {

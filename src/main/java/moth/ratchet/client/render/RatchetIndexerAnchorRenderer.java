@@ -34,6 +34,10 @@ public final class RatchetIndexerAnchorRenderer {
     private static final int TUNED_GREEN = 244;
     private static final int TUNED_BLUE = 218;
 
+    private static final int HALF_TUNE_RED = 205;
+    private static final int HALF_TUNE_GREEN = 145;
+    private static final int HALF_TUNE_BLUE = 255;
+
     private RatchetIndexerAnchorRenderer() {}
 
     public static void render(WorldRenderContext context) {
@@ -45,7 +49,7 @@ public final class RatchetIndexerAnchorRenderer {
             return;
         }
 
-        Map<BlockPos, Boolean> anchors = collectVisibleAnchors(client.player.getInventory());
+        Map<BlockPos, RatchetIndexerItem.IndexerMode> anchors = collectVisibleAnchors(client.player.getInventory());
         if (anchors.isEmpty()) {
             return;
         }
@@ -59,15 +63,15 @@ public final class RatchetIndexerAnchorRenderer {
         VertexConsumer consumer = context.consumers().getBuffer(RenderLayer.getLightning());
         double time = client.world.getTime() + context.tickDelta();
 
-        for (Map.Entry<BlockPos, Boolean> entry : anchors.entrySet()) {
+        for (Map.Entry<BlockPos, RatchetIndexerItem.IndexerMode> entry : anchors.entrySet()) {
             renderAnchor(positionMatrix, consumer, entry.getKey(), entry.getValue(), time);
         }
 
         matrices.pop();
     }
 
-    private static Map<BlockPos, Boolean> collectVisibleAnchors(PlayerInventory inventory) {
-        Map<BlockPos, Boolean> anchors = new LinkedHashMap<>();
+    private static Map<BlockPos, RatchetIndexerItem.IndexerMode> collectVisibleAnchors(PlayerInventory inventory) {
+        Map<BlockPos, RatchetIndexerItem.IndexerMode> anchors = new LinkedHashMap<>();
 
         for (ItemStack stack : inventory.main) {
             collectAnchor(stack, inventory, anchors);
@@ -80,7 +84,7 @@ public final class RatchetIndexerAnchorRenderer {
         return anchors;
     }
 
-    private static void collectAnchor(ItemStack stack, PlayerInventory inventory, Map<BlockPos, Boolean> anchors) {
+    private static void collectAnchor(ItemStack stack, PlayerInventory inventory, Map<BlockPos, RatchetIndexerItem.IndexerMode> anchors) {
         if (!stack.isOf(ModItems.RATCHET_INDEXER) || !RatchetIndexerItem.shouldRenderAnchorFor(stack, inventory.player)) {
             return;
         }
@@ -90,13 +94,19 @@ public final class RatchetIndexerAnchorRenderer {
             return;
         }
 
-        anchors.merge(anchorPos.toImmutable(), RatchetIndexerItem.isTuned(stack), (existing, incoming) -> existing || incoming);
+        anchors.merge(anchorPos.toImmutable(), RatchetIndexerItem.getIndexerMode(stack), RatchetIndexerAnchorRenderer::highestPriorityMode);
     }
 
-    private static void renderAnchor(Matrix4f positionMatrix, VertexConsumer consumer, BlockPos anchorPos, boolean tuned, double time) {
-        int red = tuned ? TUNED_RED : UNTUNED_RED;
-        int green = tuned ? TUNED_GREEN : UNTUNED_GREEN;
-        int blue = tuned ? TUNED_BLUE : UNTUNED_BLUE;
+    private static RatchetIndexerItem.IndexerMode highestPriorityMode(RatchetIndexerItem.IndexerMode existing,
+                                                                       RatchetIndexerItem.IndexerMode incoming) {
+        return incoming.renderPriority() > existing.renderPriority() ? incoming : existing;
+    }
+
+    private static void renderAnchor(Matrix4f positionMatrix, VertexConsumer consumer, BlockPos anchorPos,
+                                     RatchetIndexerItem.IndexerMode mode, double time) {
+        int red = getRed(mode);
+        int green = getGreen(mode);
+        int blue = getBlue(mode);
 
         Vec3d center = Vec3d.ofCenter(anchorPos);
         float pulse = 0.65F + (0.35F * (0.5F + 0.5F * MathHelper.sin((float) (time * 0.16D))));
@@ -105,6 +115,30 @@ public final class RatchetIndexerAnchorRenderer {
 
         renderBox(positionMatrix, consumer, center, red, green, blue, Math.round(edgeAlpha), EDGE_RADIUS * (0.92F + (0.16F * pulse)));
         renderTrails(positionMatrix, consumer, center, red, green, blue, Math.round(trailAlpha), Math.round(edgeAlpha), time);
+    }
+
+    private static int getRed(RatchetIndexerItem.IndexerMode mode) {
+        return switch (mode) {
+            case TUNED -> TUNED_RED;
+            case HALF_TUNE -> HALF_TUNE_RED;
+            case UNTUNED -> UNTUNED_RED;
+        };
+    }
+
+    private static int getGreen(RatchetIndexerItem.IndexerMode mode) {
+        return switch (mode) {
+            case TUNED -> TUNED_GREEN;
+            case HALF_TUNE -> HALF_TUNE_GREEN;
+            case UNTUNED -> UNTUNED_GREEN;
+        };
+    }
+
+    private static int getBlue(RatchetIndexerItem.IndexerMode mode) {
+        return switch (mode) {
+            case TUNED -> TUNED_BLUE;
+            case HALF_TUNE -> HALF_TUNE_BLUE;
+            case UNTUNED -> UNTUNED_BLUE;
+        };
     }
 
     private static void renderBox(Matrix4f positionMatrix, VertexConsumer consumer, Vec3d center,

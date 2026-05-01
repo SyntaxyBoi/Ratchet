@@ -34,6 +34,9 @@
     "ratchet.mixins.json"
   ],
   "custom": {
+    "modrinth": {
+      "project_id": "VJk3pfzr"
+    },
     "loom:mods": [
       {
         "name": "Ratchet",

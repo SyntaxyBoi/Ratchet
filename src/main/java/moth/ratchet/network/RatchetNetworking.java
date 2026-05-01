@@ -10,6 +10,7 @@ import net.minecraft.server.world.ServerWorld;
 import net.minecraft.util.Hand;
 import net.minecraft.util.Identifier;
 import net.minecraft.util.math.Vec3d;
+import org.jetbrains.annotations.Nullable;
 
 public final class RatchetNetworking {
     public static final Identifier LATCHET_REBOUNDER_FIRE_ID = RatchetMod.id("latchet_rebounder_fire");
@@ -23,9 +24,12 @@ public final class RatchetNetworking {
 
     public static void init() {
         ServerPlayNetworking.registerGlobalReceiver(LATCHET_REBOUNDER_FIRE_ID, (server, player, handler, buf, responseSender) -> {
-            Hand hand = buf.readEnumConstant(Hand.class);
-            RebounderAction action = buf.readEnumConstant(RebounderAction.class);
-            server.execute(() -> handleLatchetRebounderFire(player, hand, action));
+            RebounderInput input = readRebounderInput(buf);
+            if (input == null) {
+                return;
+            }
+
+            server.execute(() -> handleLatchetRebounderFire(player, input.hand(), input.action()));
         });
     }
 
@@ -92,8 +96,21 @@ public final class RatchetNetworking {
         item.tryFire(player, hand);
     }
 
+    @Nullable
+    private static RebounderInput readRebounderInput(PacketByteBuf buf) {
+        try {
+            Hand hand = buf.readEnumConstant(Hand.class);
+            RebounderAction action = buf.readEnumConstant(RebounderAction.class);
+            return buf.readableBytes() == 0 ? new RebounderInput(hand, action) : null;
+        } catch (RuntimeException ignored) {
+            return null;
+        }
+    }
+
     public enum RebounderAction {
         FIRE,
         STOP
     }
+
+    private record RebounderInput(Hand hand, RebounderAction action) {}
 }

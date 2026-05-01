@@ -1,5 +1,6 @@
 package moth.ratchet;
 
+import moth.ratchet.combat.RebounderDamageHelper;
 import moth.ratchet.enchant.ModEnchantments;
 import moth.ratchet.entity.ModEntities;
 import moth.ratchet.item.ModItems;
@@ -22,6 +23,7 @@ public class RatchetMod implements ModInitializer {
         ModItems.init();
         RatchetLootTables.init();
         RatchetNetworking.init();
+        RebounderDamageHelper.init();
         LOGGER.info("[Ratchet] Initialization complete");
     }
 

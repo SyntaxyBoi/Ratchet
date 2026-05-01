@@ -25,6 +25,11 @@ public class RatchetClient implements ClientModInitializer {
                 RatchetMod.id("tuned"),
                 (stack, world, entity, seed) -> RatchetIndexerItem.isTuned(stack) ? 1.0F : 0.0F
         );
+        ModelPredicateProviderRegistry.register(
+                ModItems.RATCHET_INDEXER,
+                RatchetMod.id("half_tuned"),
+                (stack, world, entity, seed) -> RatchetIndexerItem.isHalfTuned(stack) ? 1.0F : 0.0F
+        );
         EntityRendererRegistry.register(ModEntities.LATCHET_REBOUNDER_PROJECTILE, LatchetRebounderProjectileRenderer::new);
         ClientTickEvents.START_CLIENT_TICK.register(client -> {
             if (client.world == null) {

@@ -761,10 +761,11 @@ public class LatchetRebounderItem extends Item {
 
     private int getRapidFiringTicks(ItemStack stack) {
         NbtCompound nbt = stack.getNbt();
-        return nbt == null ? 0 : nbt.getInt(RAPID_FIRING_TICKS_KEY);
+        return nbt == null ? 0 : MathHelper.clamp(nbt.getInt(RAPID_FIRING_TICKS_KEY), 0, RAPID_MAX_FIRING_TICKS);
     }
 
     private void setRapidFiringTicks(ItemStack stack, int ticks) {
+        ticks = MathHelper.clamp(ticks, 0, RAPID_MAX_FIRING_TICKS);
         if (ticks <= 0) {
             NbtCompound nbt = stack.getNbt();
             if (nbt != null) {
@@ -778,11 +779,16 @@ public class LatchetRebounderItem extends Item {
 
     private double getRapidIntervalCarry(ItemStack stack) {
         NbtCompound nbt = stack.getNbt();
-        return nbt == null ? 0.0D : nbt.getDouble(RAPID_INTERVAL_CARRY_KEY);
+        if (nbt == null) {
+            return 0.0D;
+        }
+
+        double carry = nbt.getDouble(RAPID_INTERVAL_CARRY_KEY);
+        return Double.isFinite(carry) && carry > 0.0D ? Math.min(carry, 1.0D) : 0.0D;
     }
 
     private void setRapidIntervalCarry(ItemStack stack, double carry) {
-        if (carry <= 0.0D) {
+        if (!Double.isFinite(carry) || carry <= 0.0D) {
             NbtCompound nbt = stack.getNbt();
             if (nbt != null) {
                 nbt.remove(RAPID_INTERVAL_CARRY_KEY);
@@ -790,7 +796,7 @@ public class LatchetRebounderItem extends Item {
             return;
         }
 
-        stack.getOrCreateNbt().putDouble(RAPID_INTERVAL_CARRY_KEY, carry);
+        stack.getOrCreateNbt().putDouble(RAPID_INTERVAL_CARRY_KEY, Math.min(carry, 1.0D));
     }
 
     public boolean isCoolingDown(ItemStack stack, long worldTime) {

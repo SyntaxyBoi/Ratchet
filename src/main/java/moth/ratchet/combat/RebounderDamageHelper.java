@@ -1,6 +1,7 @@
 package moth.ratchet.combat;
 
 import moth.ratchet.RatchetDamageSources;
+import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.LivingEntity;
 import net.minecraft.entity.damage.DamageSource;
@@ -20,6 +21,10 @@ public final class RebounderDamageHelper {
     private static final Map<ArmorPierceKey, Long> ARMOR_PIERCE_LOCKOUTS = new HashMap<>();
 
     private RebounderDamageHelper() {}
+
+    public static void init() {
+        ServerLifecycleEvents.SERVER_STOPPED.register(server -> clearArmorPierceLockouts());
+    }
 
     public static boolean isValidChargeLossSource(DamageSource source) {
         return source.isOf(DamageTypes.EXPLOSION)
@@ -84,6 +89,10 @@ public final class RebounderDamageHelper {
                 iterator.remove();
             }
         }
+    }
+
+    private static void clearArmorPierceLockouts() {
+        ARMOR_PIERCE_LOCKOUTS.clear();
     }
 
     private record ArmorPierceKey(String worldKey, UUID targetId) {}

@@ -9,6 +9,12 @@
         "ratchet:tuned": 1.0
       },
       "model": "ratchet:item/ratchet_indexer_tuned"
+    },
+    {
+      "predicate": {
+        "ratchet:half_tuned": 1.0
+      },
+      "model": "ratchet:item/ratchet_indexer_halftuned"
     }
   ]
 }

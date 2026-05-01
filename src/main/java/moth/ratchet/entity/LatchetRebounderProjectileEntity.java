@@ -16,6 +16,7 @@ import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.item.Items;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NbtCompound;
+import net.minecraft.nbt.NbtElement;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.server.world.ChunkTicketType;
@@ -224,27 +225,27 @@ public class LatchetRebounderProjectileEntity extends Entity {
     @Override
     protected void readCustomDataFromNbt(NbtCompound nbt) {
         this.ownerUuid = nbt.containsUuid("OwnerUuid") ? nbt.getUuid("OwnerUuid") : null;
-        this.ownerId = nbt.getInt("OwnerId");
-        this.sourceCharge = nbt.getInt("SourceCharge");
-        this.remainingBounces = nbt.getInt("RemainingBounces");
-        this.totalRicochets = nbt.getInt("TotalRicochets");
-        this.ticksSinceBounceOrSpawn = nbt.getInt("TicksSinceBounceOrSpawn");
-        this.damage = nbt.getFloat("Damage");
+        this.ownerId = readClampedInt(nbt, "OwnerId", -1, Integer.MAX_VALUE, -1);
+        this.sourceCharge = readClampedInt(nbt, "SourceCharge", 0, MAX_TOTAL_RICOCHETS, 0);
+        this.remainingBounces = readClampedInt(nbt, "RemainingBounces", 0, MAX_TOTAL_RICOCHETS, 0);
+        this.totalRicochets = readClampedInt(nbt, "TotalRicochets", 0, MAX_TOTAL_RICOCHETS, 0);
+        this.ticksSinceBounceOrSpawn = readClampedInt(nbt, "TicksSinceBounceOrSpawn", 0, MAX_SEGMENT_LIFETIME_TICKS, 0);
+        this.damage = readDamage(nbt, this.sourceCharge);
         this.pendingResumeDirection = readVector(nbt, "PendingDirection");
         this.pendingResumeNormal = nbt.contains("PendingNormal") ? readVector(nbt, "PendingNormal") : Vec3d.ZERO;
-        this.pendingResumeOffset = nbt.contains("PendingResumeOffset") ? nbt.getDouble("PendingResumeOffset") : RESUME_OFFSET;
-        this.pendingResumeSurfaceOffset = nbt.contains("PendingSurfaceOffset") ? nbt.getDouble("PendingSurfaceOffset") : SURFACE_RESUME_OFFSET;
-        this.pendingResumeSpeed = nbt.getDouble("PendingSpeed");
+        this.pendingResumeOffset = readNonNegativeDouble(nbt, "PendingResumeOffset", RESUME_OFFSET);
+        this.pendingResumeSurfaceOffset = readNonNegativeDouble(nbt, "PendingSurfaceOffset", SURFACE_RESUME_OFFSET);
+        this.pendingResumeSpeed = readNonNegativeDouble(nbt, "PendingSpeed", 0.0D);
         this.lastImpactPosition = readNullableVector(nbt, "LastImpact");
         this.lastImpactNormal = readNullableVector(nbt, "LastNormal");
         this.priorImpactPosition = readNullableVector(nbt, "PriorImpact");
         this.priorImpactNormal = readNullableVector(nbt, "PriorNormal");
-        this.ignoredEntityId = nbt.getInt("IgnoredEntityId");
-        this.ignoredEntityUntilAge = nbt.getInt("IgnoredEntityUntilAge");
+        this.ignoredEntityId = readClampedInt(nbt, "IgnoredEntityId", -1, Integer.MAX_VALUE, -1);
+        this.ignoredEntityUntilAge = readClampedInt(nbt, "IgnoredEntityUntilAge", -1, Integer.MAX_VALUE, -1);
         this.setTrackedImpact(readVector(nbt, "TrackedImpact"));
         this.setTrackedIncomingDirection(readVector(nbt, "TrackedIncoming"));
         this.setTrackedOutgoingDirection(readVector(nbt, "TrackedOutgoing"));
-        this.dataTracker.set(PAUSE_TICKS_REMAINING, nbt.getInt("PauseTicks"));
+        this.dataTracker.set(PAUSE_TICKS_REMAINING, readClampedInt(nbt, "PauseTicks", 0, PAUSE_TICKS, 0));
     }
 
     @Override
@@ -322,7 +323,7 @@ public class LatchetRebounderProjectileEntity extends Entity {
             return getTrackedOutgoingDirection();
         }
 
-        return getTrackedIncomingDirection().lerp(getTrackedOutgoingDirection(), getPauseBlend(tickDelta)).normalize();
+        return normalizedOrFallback(getTrackedIncomingDirection().lerp(getTrackedOutgoingDirection(), getPauseBlend(tickDelta)), getTrackedOutgoingDirection());
     }
 
     public List<Vec3d> getTrailHistory() {
@@ -661,10 +662,14 @@ public class LatchetRebounderProjectileEntity extends Entity {
     }
 
     private boolean matchesImpact(Vec3d previousImpactPosition, Vec3d previousImpactNormal, Vec3d impactPosition, Vec3d surfaceNormal) {
-        return previousImpactPosition != null
-                && previousImpactNormal != null
-                && previousImpactPosition.squaredDistanceTo(impactPosition) <= (IMPACT_REPEAT_DISTANCE * IMPACT_REPEAT_DISTANCE)
-                && previousImpactNormal.normalize().dotProduct(surfaceNormal.normalize()) >= IMPACT_REPEAT_NORMAL_DOT;
+        if (previousImpactPosition == null || previousImpactNormal == null) {
+            return false;
+        }
+
+        Vec3d previousNormal = normalizedOrFallback(previousImpactNormal, Vec3d.ZERO);
+        Vec3d currentNormal = normalizedOrFallback(surfaceNormal, Vec3d.ZERO);
+        return previousImpactPosition.squaredDistanceTo(impactPosition) <= (IMPACT_REPEAT_DISTANCE * IMPACT_REPEAT_DISTANCE)
+                && previousNormal.dotProduct(currentNormal) >= IMPACT_REPEAT_NORMAL_DOT;
     }
 
     private void pruneExpiredEntityHitLocks() {
@@ -867,8 +872,8 @@ public class LatchetRebounderProjectileEntity extends Entity {
     }
 
     private Vec3d normalizedOrFallback(Vec3d vector, Vec3d fallback) {
-        if (vector.lengthSquared() < 1.0E-6D) {
-            return fallback;
+        if (!isFinite(vector) || vector.lengthSquared() < 1.0E-6D) {
+            return isFinite(fallback) ? fallback : Vec3d.ZERO;
         }
         return vector.normalize();
     }
@@ -878,12 +883,16 @@ public class LatchetRebounderProjectileEntity extends Entity {
     }
 
     private static Vec3d readVector(NbtCompound nbt, String key) {
+        if (!nbt.contains(key, NbtElement.COMPOUND_TYPE)) {
+            return Vec3d.ZERO;
+        }
+
         NbtCompound vectorNbt = nbt.getCompound(key);
-        return new Vec3d(vectorNbt.getDouble("X"), vectorNbt.getDouble("Y"), vectorNbt.getDouble("Z"));
+        return finiteOrFallback(new Vec3d(vectorNbt.getDouble("X"), vectorNbt.getDouble("Y"), vectorNbt.getDouble("Z")), Vec3d.ZERO);
     }
 
     private static Vec3d readNullableVector(NbtCompound nbt, String key) {
-        return nbt.contains(key) ? readVector(nbt, key) : null;
+        return nbt.contains(key, NbtElement.COMPOUND_TYPE) ? readVector(nbt, key) : null;
     }
 
     private static void writeVector(NbtCompound nbt, String key, Vec3d vector) {
@@ -898,6 +907,37 @@ public class LatchetRebounderProjectileEntity extends Entity {
         if (vector != null) {
             writeVector(nbt, key, vector);
         }
+    }
+
+    private static int readClampedInt(NbtCompound nbt, String key, int min, int max, int fallback) {
+        return nbt.contains(key, NbtElement.INT_TYPE) ? MathHelper.clamp(nbt.getInt(key), min, max) : fallback;
+    }
+
+    private static double readNonNegativeDouble(NbtCompound nbt, String key, double fallback) {
+        if (!nbt.contains(key, NbtElement.DOUBLE_TYPE)) {
+            return fallback;
+        }
+
+        double value = nbt.getDouble(key);
+        return Double.isFinite(value) && value >= 0.0D ? value : fallback;
+    }
+
+    private static float readDamage(NbtCompound nbt, int sourceCharge) {
+        float fallback = (float) (BASE_DAMAGE + (DAMAGE_PER_CHARGE * sourceCharge));
+        if (!nbt.contains("Damage", NbtElement.FLOAT_TYPE)) {
+            return fallback;
+        }
+
+        float value = nbt.getFloat("Damage");
+        return Float.isFinite(value) && value > 0.0F ? value : fallback;
+    }
+
+    private static Vec3d finiteOrFallback(Vec3d vector, Vec3d fallback) {
+        return isFinite(vector) ? vector : fallback;
+    }
+
+    private static boolean isFinite(Vec3d vector) {
+        return Double.isFinite(vector.x) && Double.isFinite(vector.y) && Double.isFinite(vector.z);
     }
 
     private record CollisionResult(HitResult hit) {}

@@ -4,6 +4,7 @@ import moth.ratchet.combat.RebounderDamageHelper;
 import moth.ratchet.item.AbstractRatchetWeaponItem;
 import moth.ratchet.item.LatchetRebounderItem;
 import moth.ratchet.item.OvercrankRatchetDriverItem;
+import moth.ratchet.item.RatchetIndexerItem;
 import net.minecraft.entity.damage.DamageSource;
 import net.minecraft.entity.player.PlayerEntity;
 import org.spongepowered.asm.mixin.Mixin;
@@ -43,5 +44,7 @@ public abstract class LivingEntityOvercrankDamageMixin {
         if (RebounderDamageHelper.isValidChargeLossSource(source)) {
             LatchetRebounderItem.loseHeldCharge(player);
         }
+
+        RatchetIndexerItem.applyDirectDamageCooldown(player, source, amount);
     }
 }

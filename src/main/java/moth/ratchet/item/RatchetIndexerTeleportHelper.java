@@ -3,7 +3,7 @@ package moth.ratchet.item;
 import net.minecraft.block.BlockState;
 import net.minecraft.block.Blocks;
 import net.minecraft.block.CampfireBlock;
-import net.minecraft.entity.LivingEntity;
+import net.minecraft.entity.Entity;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Box;
@@ -21,8 +21,8 @@ final class RatchetIndexerTeleportHelper {
     private RatchetIndexerTeleportHelper() {}
 
     @Nullable
-    public static Vec3d findSafePositionNearAnchor(ServerWorld world, LivingEntity entity, BlockPos anchorFeetPos,
-                                                   Set<BlockPos> reservedFeetPositions) {
+    public static Vec3d findSafePositionNearAnchor(ServerWorld world, Entity entity, BlockPos anchorFeetPos,
+                                                   @Nullable Set<BlockPos> reservedFeetPositions) {
         for (int radius = 0; radius <= MAX_NEAR_ANCHOR_RADIUS; radius++) {
             for (int verticalOffset : VERTICAL_SEARCH_ORDER) {
                 int candidateY = anchorFeetPos.getY() + verticalOffset;
@@ -59,7 +59,7 @@ final class RatchetIndexerTeleportHelper {
     }
 
     @Nullable
-    public static Vec3d findNearestVerticalPosition(ServerWorld world, LivingEntity entity, BlockPos anchorFeetPos) {
+    public static Vec3d findNearestVerticalPosition(ServerWorld world, Entity entity, BlockPos anchorFeetPos) {
         int maxDistance = Math.max(
                 world.getTopY() - anchorFeetPos.getY(),
                 anchorFeetPos.getY() - world.getBottomY()
@@ -91,7 +91,7 @@ final class RatchetIndexerTeleportHelper {
     }
 
     @Nullable
-    public static Vec3d findHighestSafePosition(ServerWorld world, LivingEntity entity, BlockPos anchorFeetPos) {
+    public static Vec3d findHighestSafePosition(ServerWorld world, Entity entity, BlockPos anchorFeetPos) {
         for (int y = world.getTopY() - 1; y >= world.getBottomY() + 1; y--) {
             Vec3d position = tryFeetPosition(world, entity, new BlockPos(anchorFeetPos.getX(), y, anchorFeetPos.getZ()), null);
             if (position != null) {
@@ -103,7 +103,7 @@ final class RatchetIndexerTeleportHelper {
     }
 
     @Nullable
-    public static Vec3d findLowestSafePosition(ServerWorld world, LivingEntity entity, BlockPos anchorFeetPos) {
+    public static Vec3d findLowestSafePosition(ServerWorld world, Entity entity, BlockPos anchorFeetPos) {
         for (int y = world.getBottomY() + 1; y < world.getTopY(); y++) {
             Vec3d position = tryFeetPosition(world, entity, new BlockPos(anchorFeetPos.getX(), y, anchorFeetPos.getZ()), null);
             if (position != null) {
@@ -115,7 +115,7 @@ final class RatchetIndexerTeleportHelper {
     }
 
     @Nullable
-    private static Vec3d tryFeetPosition(ServerWorld world, LivingEntity entity, BlockPos feetPos,
+    private static Vec3d tryFeetPosition(ServerWorld world, Entity entity, BlockPos feetPos,
                                          @Nullable Set<BlockPos> reservedFeetPositions) {
         if (reservedFeetPositions != null && reservedFeetPositions.contains(feetPos)) {
             return null;
@@ -128,7 +128,7 @@ final class RatchetIndexerTeleportHelper {
         return Vec3d.ofBottomCenter(feetPos);
     }
 
-    private static boolean isSafeFeetPosition(ServerWorld world, LivingEntity entity, BlockPos feetPos) {
+    private static boolean isSafeFeetPosition(ServerWorld world, Entity entity, BlockPos feetPos) {
         if (!isWithinHeight(world, feetPos.getY()) || !world.getWorldBorder().contains(feetPos)) {
             return false;
         }

@@ -10,9 +10,11 @@ import net.minecraft.loot.provider.number.ConstantLootNumberProvider;
 import net.minecraft.util.Identifier;
 
 public final class RatchetLootTables {
+    private static final Identifier ANCIENT_CITY_ID = new Identifier("minecraft", "chests/ancient_city");
     private static final Identifier END_CITY_TREASURE_ID = new Identifier("minecraft", "chests/end_city_treasure");
     private static final Identifier TRAIL_RUINS_COMMON_ID = new Identifier("minecraft", "archaeology/trail_ruins_common");
     private static final Identifier TRAIL_RUINS_RARE_ID = new Identifier("minecraft", "archaeology/trail_ruins_rare");
+    private static final float ANCIENT_CITY_SILENCE_TRIM_CHANCE = 1.0F / 80.0F;
 
     private RatchetLootTables() {}
 
@@ -23,12 +25,23 @@ public final class RatchetLootTables {
             }
 
             if (TRAIL_RUINS_COMMON_ID.equals(id)) {
-                addToExistingPools(tableBuilder, 2);
+                addToExistingPools(tableBuilder, 1);
                 return;
             }
 
             if (TRAIL_RUINS_RARE_ID.equals(id)) {
                 addToExistingPools(tableBuilder, 1);
+                return;
+            }
+
+            if (ANCIENT_CITY_ID.equals(id)) {
+                ((FabricLootTableBuilder) tableBuilder).pool(
+                        LootPool.builder()
+                                .rolls(ConstantLootNumberProvider.create(1))
+                                .conditionally(RandomChanceLootCondition.builder(ANCIENT_CITY_SILENCE_TRIM_CHANCE))
+                                .with(ItemEntry.builder(ModItems.LATCHET_BARREL))
+                                .build()
+                );
                 return;
             }
 
