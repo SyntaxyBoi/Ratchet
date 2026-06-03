@@ -4,12 +4,16 @@ import moth.ratchet.item.ModItems;
 import moth.ratchet.item.RatchetIndexerItem;
 import net.fabricmc.fabric.api.client.rendering.v1.WorldRenderContext;
 import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.render.Frustum;
 import net.minecraft.client.render.RenderLayer;
 import net.minecraft.client.render.VertexConsumer;
+import net.minecraft.client.render.WorldRenderer;
 import net.minecraft.client.util.math.MatrixStack;
+import net.minecraft.client.world.ClientWorld;
 import net.minecraft.entity.player.PlayerInventory;
 import net.minecraft.item.ItemStack;
 import net.minecraft.util.math.BlockPos;
+import net.minecraft.util.math.Box;
 import net.minecraft.util.math.MathHelper;
 import net.minecraft.util.math.Vec3d;
 import org.joml.Matrix4f;
@@ -21,6 +25,8 @@ public final class RatchetIndexerAnchorRenderer {
     private static final double BOX_HALF_SIZE = 0.0625D;
     private static final double TRAIL_LENGTH = 0.92D;
     private static final double PULSE_LENGTH = 0.18D;
+    private static final double ANCHOR_BOUNDS_RADIUS = 0.16D;
+    private static final double ANCHOR_BOUNDS_HEIGHT = BOX_HALF_SIZE + TRAIL_LENGTH + PULSE_LENGTH;
     private static final float EDGE_RADIUS = 0.0105F;
     private static final float TRAIL_RADIUS = 0.018F;
     private static final float PULSE_RADIUS = 0.024F;
@@ -49,7 +55,12 @@ public final class RatchetIndexerAnchorRenderer {
             return;
         }
 
-        Map<BlockPos, RatchetIndexerItem.IndexerMode> anchors = collectVisibleAnchors(client.player.getInventory());
+        Map<BlockPos, RatchetIndexerItem.IndexerMode> anchors = collectVisibleAnchors(
+                client.player.getInventory(),
+                client.world,
+                context.worldRenderer(),
+                context.frustum()
+        );
         if (anchors.isEmpty()) {
             return;
         }
@@ -57,34 +68,36 @@ public final class RatchetIndexerAnchorRenderer {
         MatrixStack matrices = context.matrixStack();
         Vec3d cameraPos = context.camera().getPos();
         matrices.push();
-        matrices.translate(-cameraPos.x, -cameraPos.y, -cameraPos.z);
 
         Matrix4f positionMatrix = matrices.peek().getPositionMatrix();
         VertexConsumer consumer = context.consumers().getBuffer(RenderLayer.getLightning());
         double time = client.world.getTime() + context.tickDelta();
 
         for (Map.Entry<BlockPos, RatchetIndexerItem.IndexerMode> entry : anchors.entrySet()) {
-            renderAnchor(positionMatrix, consumer, entry.getKey(), entry.getValue(), time);
+            Vec3d relativeCenter = Vec3d.ofCenter(entry.getKey()).subtract(cameraPos);
+            renderAnchor(positionMatrix, consumer, relativeCenter, entry.getValue(), time);
         }
 
         matrices.pop();
     }
 
-    private static Map<BlockPos, RatchetIndexerItem.IndexerMode> collectVisibleAnchors(PlayerInventory inventory) {
+    private static Map<BlockPos, RatchetIndexerItem.IndexerMode> collectVisibleAnchors(PlayerInventory inventory, ClientWorld world,
+                                                                                       WorldRenderer worldRenderer, Frustum frustum) {
         Map<BlockPos, RatchetIndexerItem.IndexerMode> anchors = new LinkedHashMap<>();
 
         for (ItemStack stack : inventory.main) {
-            collectAnchor(stack, inventory, anchors);
+            collectAnchor(stack, inventory, world, worldRenderer, frustum, anchors);
         }
 
         for (ItemStack stack : inventory.offHand) {
-            collectAnchor(stack, inventory, anchors);
+            collectAnchor(stack, inventory, world, worldRenderer, frustum, anchors);
         }
 
         return anchors;
     }
 
-    private static void collectAnchor(ItemStack stack, PlayerInventory inventory, Map<BlockPos, RatchetIndexerItem.IndexerMode> anchors) {
+    private static void collectAnchor(ItemStack stack, PlayerInventory inventory, ClientWorld world, WorldRenderer worldRenderer,
+                                      Frustum frustum, Map<BlockPos, RatchetIndexerItem.IndexerMode> anchors) {
         if (!stack.isOf(ModItems.RATCHET_INDEXER) || !RatchetIndexerItem.shouldRenderAnchorFor(stack, inventory.player)) {
             return;
         }
@@ -94,7 +107,36 @@ public final class RatchetIndexerAnchorRenderer {
             return;
         }
 
+        if (!isAnchorVisible(world, worldRenderer, frustum, anchorPos)) {
+            return;
+        }
+
         anchors.merge(anchorPos.toImmutable(), RatchetIndexerItem.getIndexerMode(stack), RatchetIndexerAnchorRenderer::highestPriorityMode);
+    }
+
+    private static boolean isAnchorVisible(ClientWorld world, WorldRenderer worldRenderer, Frustum frustum, BlockPos anchorPos) {
+        if (!world.isChunkLoaded(anchorPos.getX() >> 4, anchorPos.getZ() >> 4)) {
+            return false;
+        }
+
+        if (!worldRenderer.isRenderingReady(anchorPos)) {
+            return false;
+        }
+
+        if (frustum == null) {
+            return true;
+        }
+
+        Vec3d center = Vec3d.ofCenter(anchorPos);
+        Box bounds = new Box(
+                center.x - ANCHOR_BOUNDS_RADIUS,
+                center.y - ANCHOR_BOUNDS_HEIGHT,
+                center.z - ANCHOR_BOUNDS_RADIUS,
+                center.x + ANCHOR_BOUNDS_RADIUS,
+                center.y + ANCHOR_BOUNDS_HEIGHT,
+                center.z + ANCHOR_BOUNDS_RADIUS
+        );
+        return frustum.isVisible(bounds);
     }
 
     private static RatchetIndexerItem.IndexerMode highestPriorityMode(RatchetIndexerItem.IndexerMode existing,
@@ -102,13 +144,12 @@ public final class RatchetIndexerAnchorRenderer {
         return incoming.renderPriority() > existing.renderPriority() ? incoming : existing;
     }
 
-    private static void renderAnchor(Matrix4f positionMatrix, VertexConsumer consumer, BlockPos anchorPos,
+    private static void renderAnchor(Matrix4f positionMatrix, VertexConsumer consumer, Vec3d center,
                                      RatchetIndexerItem.IndexerMode mode, double time) {
         int red = getRed(mode);
         int green = getGreen(mode);
         int blue = getBlue(mode);
 
-        Vec3d center = Vec3d.ofCenter(anchorPos);
         float pulse = 0.65F + (0.35F * (0.5F + 0.5F * MathHelper.sin((float) (time * 0.16D))));
         float edgeAlpha = Math.round(MathHelper.lerp(pulse, 110.0F, 205.0F));
         float trailAlpha = Math.round(MathHelper.lerp(pulse, 45.0F, 125.0F));

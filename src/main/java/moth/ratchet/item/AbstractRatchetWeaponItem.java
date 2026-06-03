@@ -3,6 +3,7 @@ package moth.ratchet.item;
 import com.google.common.collect.ImmutableMultimap;
 import com.google.common.collect.Multimap;
 import moth.ratchet.RatchetDamageSources;
+import moth.ratchet.combat.RatchetImpactParticleHelper;
 import moth.ratchet.enchant.ModEnchantments;
 import net.minecraft.client.item.TooltipContext;
 import net.minecraft.entity.Entity;
@@ -17,8 +18,6 @@ import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NbtCompound;
-import net.minecraft.particle.BlockStateParticleEffect;
-import net.minecraft.particle.ParticleTypes;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.sound.SoundCategory;
 import net.minecraft.sound.SoundEvent;
@@ -641,35 +640,19 @@ public abstract class AbstractRatchetWeaponItem extends Item {
             return;
         }
 
-        float referenceDamage = Math.max(0.5F, getParticleReferenceDamage());
-        float fullness = MathHelper.clamp(directBonusDamage / (referenceDamage * 0.9F), 0.0F, 1.0F);
-        float density = 0.25F + (0.75F * fullness);
         float particleRadius = Math.max(0.75F, getParticleRadius(primaryTarget, attacker, charge, directBonusDamage, radius));
-        int particleCount = Math.max(16, Math.round((36.0F * particleRadius) * density));
 
         BlockPos basePos = primaryTarget.getSteppingPos();
         if (world.getBlockState(basePos).isAir()) {
             basePos = primaryTarget.getBlockPos().down();
         }
-
-        if (world.getBlockState(basePos).isAir()) {
-            return;
-        }
-
-        BlockStateParticleEffect particle = new BlockStateParticleEffect(ParticleTypes.BLOCK, world.getBlockState(basePos));
-        Vec3d center = primaryTarget.getPos();
-
-        for (int i = 0; i < particleCount; i++) {
-            double angle = world.random.nextDouble() * Math.PI * 2.0D;
-            double distance = Math.sqrt(world.random.nextDouble()) * particleRadius;
-            double x = center.x + Math.cos(angle) * distance;
-            double z = center.z + Math.sin(angle) * distance;
-            double y = basePos.getY() + 1.02D;
-            double vx = (world.random.nextDouble() - 0.5D) * 0.12D;
-            double vy = 0.16D + (world.random.nextDouble() * 0.26D);
-            double vz = (world.random.nextDouble() - 0.5D) * 0.12D;
-
-            world.spawnParticles(particle, x, y, z, 0, vx, vy, vz, 0.0D);
-        }
+        RatchetImpactParticleHelper.spawnGroundImpactParticles(
+                world,
+                primaryTarget.getPos(),
+                basePos,
+                directBonusDamage,
+                getParticleReferenceDamage(),
+                particleRadius
+        );
     }
 }

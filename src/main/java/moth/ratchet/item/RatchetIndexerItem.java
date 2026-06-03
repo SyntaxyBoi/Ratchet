@@ -22,6 +22,7 @@ import net.minecraft.util.Formatting;
 import net.minecraft.util.Hand;
 import net.minecraft.util.Identifier;
 import net.minecraft.util.TypedActionResult;
+import net.minecraft.util.UseAction;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.World;
@@ -45,8 +46,9 @@ public class RatchetIndexerItem extends Item {
 
     private static final double CLEAR_RADIUS = 5.0D;
     private static final double UNTUNED_ENTITY_RADIUS = 8.0D;
-    private static final int ACTIVATION_COOLDOWN_TICKS = 25 * 20;
+    private static final int ACTIVATION_COOLDOWN_TICKS = 10 * 20;
     private static final int DAMAGE_COOLDOWN_TICKS = 3 * 20;
+    private static final int USE_HOLD_TICKS = 70;
 
     public RatchetIndexerItem() {
         super(new Settings().maxCount(1));
@@ -55,17 +57,36 @@ public class RatchetIndexerItem extends Item {
     @Override
     public TypedActionResult<ItemStack> use(World world, PlayerEntity user, Hand hand) {
         ItemStack stack = user.getStackInHand(hand);
-        if (!(world instanceof ServerWorld serverWorld)) {
-            return TypedActionResult.success(stack, true);
+
+        if (shouldUseHeldTeleport(world, user, hand, stack)) {
+            user.setCurrentHand(hand);
+            return TypedActionResult.consume(stack);
         }
 
-        if (user.isSneaking()) {
-            activateOrToggle(serverWorld, user, hand, stack);
-        } else {
-            setOrClearAnchor(serverWorld, user, stack);
+        if (world instanceof ServerWorld serverWorld) {
+            completeInstantUse(serverWorld, user, hand, stack);
         }
 
-        return TypedActionResult.success(stack, false);
+        return TypedActionResult.consume(stack);
+    }
+
+    @Override
+    public UseAction getUseAction(ItemStack stack) {
+        return UseAction.NONE;
+    }
+
+    @Override
+    public int getMaxUseTime(ItemStack stack) {
+        return USE_HOLD_TICKS;
+    }
+
+    @Override
+    public ItemStack finishUsing(ItemStack stack, World world, LivingEntity user) {
+        if (world instanceof ServerWorld serverWorld && user instanceof PlayerEntity player) {
+            completeHeldUse(serverWorld, player, resolveUseHand(player, stack), stack);
+        }
+
+        return stack;
     }
 
     @Override
@@ -160,6 +181,62 @@ public class RatchetIndexerItem extends Item {
         if (!player.getItemCooldownManager().isCoolingDown(ModItems.RATCHET_INDEXER)) {
             player.getItemCooldownManager().set(ModItems.RATCHET_INDEXER, DAMAGE_COOLDOWN_TICKS);
         }
+    }
+
+    private void completeHeldUse(ServerWorld world, PlayerEntity user, Hand hand, ItemStack stack) {
+        if (!user.isSneaking() || getMode(stack) != IndexerMode.TUNED) {
+            return;
+        }
+
+        ItemStack offhandStack = hand == Hand.MAIN_HAND ? user.getOffHandStack() : ItemStack.EMPTY;
+        if (offhandStack.isOf(ModItems.MECHANICAL_TUNER)) {
+            return;
+        }
+
+        activateOrToggle(world, user, hand, stack);
+    }
+
+    private void completeInstantUse(ServerWorld world, PlayerEntity user, Hand hand, ItemStack stack) {
+        if (user.isSneaking()) {
+            activateOrToggle(world, user, hand, stack);
+            return;
+        }
+
+        setOrClearAnchor(world, user, stack);
+    }
+
+    private boolean shouldUseHeldTeleport(World world, PlayerEntity user, Hand hand, ItemStack stack) {
+        if (!user.isSneaking() || getMode(stack) != IndexerMode.TUNED || user.getItemCooldownManager().isCoolingDown(this)) {
+            return false;
+        }
+
+        ItemStack offhandStack = hand == Hand.MAIN_HAND ? user.getOffHandStack() : ItemStack.EMPTY;
+        if (offhandStack.isOf(ModItems.MECHANICAL_TUNER)) {
+            return false;
+        }
+
+        BlockPos anchorPos = getAnchorPos(stack);
+        Identifier anchorDimension = getAnchorDimension(stack);
+        return anchorPos != null
+                && anchorDimension != null
+                && anchorDimension.equals(world.getRegistryKey().getValue());
+    }
+
+    private Hand resolveUseHand(PlayerEntity player, ItemStack stack) {
+        Hand activeHand = player.getActiveHand();
+        if (player.getStackInHand(activeHand).getItem() instanceof RatchetIndexerItem) {
+            return activeHand;
+        }
+
+        if (player.getMainHandStack() == stack || player.getMainHandStack().isOf(this)) {
+            return Hand.MAIN_HAND;
+        }
+
+        if (player.getOffHandStack() == stack || player.getOffHandStack().isOf(this)) {
+            return Hand.OFF_HAND;
+        }
+
+        return activeHand;
     }
 
     private void setOrClearAnchor(ServerWorld world, PlayerEntity user, ItemStack stack) {

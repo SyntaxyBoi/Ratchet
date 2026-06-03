@@ -53,6 +53,9 @@ import net.minecraft.block.LeverBlock;
 import net.minecraft.block.NoteBlock;
 import net.minecraft.block.RepeaterBlock;
 import net.minecraft.block.TrapdoorBlock;
+import net.minecraft.util.math.BlockPos;
+import net.minecraft.util.shape.VoxelShape;
+import net.minecraft.world.BlockView;
 
 public class LatchetRebounderItem extends Item {
     private static final String CHARGE_KEY = "LatchetCharge";
@@ -63,6 +66,10 @@ public class LatchetRebounderItem extends Item {
     private static final String DISPLAY_TICK_KEY = "LatchetDisplayTick";
     private static final String RAPID_FIRING_TICKS_KEY = "LatchetRapidFiringTicks";
     private static final String RAPID_INTERVAL_CARRY_KEY = "LatchetRapidIntervalCarry";
+    private static final String RAPID_START_TICK_KEY = "LatchetRapidStartTick";
+    private static final String RAPID_INTERRUPTED_TICK_KEY = "LatchetRapidInterruptedTick";
+    private static final String LAST_RAILPIERCER_FIRE_TICK_KEY = "LatchetLastRailpiercerFireTick";
+    private static final String LAST_RAILPIERCER_COOLDOWN_TICKS_KEY = "LatchetLastRailpiercerCooldownTicks";
 
     private static final int MAX_CHARGE = 5;
     private static final int MAX_USE_TIME = 72000;
@@ -70,10 +77,13 @@ public class LatchetRebounderItem extends Item {
     private static final int DECAY_INTERVAL_TICKS = 600;
     private static final int BASE_COOLDOWN_TICKS = 30;
     private static final int COOLDOWN_PER_CHARGE_TICKS = 5;
+    private static final int RAILPIERCER_COOLDOWN_MULTIPLIER = 4;
     private static final int RAPID_RELEASE_COOLDOWN_TICKS = 200;
     private static final int RAPID_SPEED_RAMP_TICKS = 100;
+    private static final int RAPID_DAMAGE_RAMP_TICKS = 60;
     private static final int RAPID_FULL_SPREAD_TICKS = 300;
-    private static final int RAPID_MAX_FIRING_TICKS = 900;
+    private static final int RAPID_MAX_FIRING_TICKS = 500;
+    private static final int RAPID_DAMAGE_INTERRUPT_DELAY_TICKS = 10;
     private static final double LOADED_BURST_YAW_STEP_DEGREES = 4.0D;
     private static final double LOADED_BURST_PITCH_STEP_DEGREES = 1.1D;
     private static final double HITSCAN_RANGE = 48.0D;
@@ -82,13 +92,15 @@ public class LatchetRebounderItem extends Item {
     private static final double HAND_FORWARD_OFFSET = 0.68D;
     private static final double HAND_SIDE_OFFSET = 0.18D;
     private static final double HAND_DROP_OFFSET = 0.18D;
-    private static final double RAIL_BLOCK_SKIP_DISTANCE = 1.05D;
-    private static final double RAIL_ENTITY_SKIP_DISTANCE = 0.45D;
+    private static final double RAIL_BLOCK_EXIT_PADDING = 0.035D;
+    private static final double RAIL_ENTITY_EXIT_PADDING = 0.035D;
     private static final float RAPID_MIN_RATE = 2.0F;
     private static final float RAPID_MAX_RATE = 8.0F;
-    private static final float BASE_DAMAGE = 8.0F;
+    private static final float BASE_DAMAGE = 5.6F;
+    private static final float RAILPIERCER_BASE_DAMAGE = 8.0F;
     private static final float RAPID_FIRE_DAMAGE = 1.0F;
     private static final float RAILPIERCER_DAMAGE_MULTIPLIER = 1.8F;
+    private static final float RAILPIERCER_MIN_REPEAT_DAMAGE_MULTIPLIER = 0.5F;
     private static final double HITSCAN_KNOCKBACK_HORIZONTAL = 0.56D;
     private static final double HITSCAN_KNOCKBACK_VERTICAL = 0.08D;
     private static final double RAPID_KNOCKBACK_HORIZONTAL = 0.0D;
@@ -121,7 +133,7 @@ public class LatchetRebounderItem extends Item {
             return TypedActionResult.fail(stack);
         }
 
-        if (isCoolingDown(stack, world.getTime()) || getCurrentCharge(stack) >= getMaxCharge(stack)) {
+        if (isCoolingDown(user, world.getTime()) || getCurrentCharge(stack) >= getMaxCharge(stack)) {
             return TypedActionResult.fail(stack);
         }
 
@@ -141,7 +153,7 @@ public class LatchetRebounderItem extends Item {
 
     @Override
     public void usageTick(World world, LivingEntity user, ItemStack stack, int remainingUseTicks) {
-        if (world.isClient || !(user instanceof PlayerEntity player) || !usesStoredCharge(stack) || isCoolingDown(stack, world.getTime())) {
+        if (world.isClient || !(user instanceof PlayerEntity player) || !usesStoredCharge(stack) || isCoolingDown(player, world.getTime())) {
             return;
         }
 
@@ -276,7 +288,7 @@ public class LatchetRebounderItem extends Item {
         }
 
         long now = serverWorld.getTime();
-        if (isCoolingDown(stack, now)) {
+        if (isCoolingDown(player, now)) {
             return;
         }
 
@@ -300,16 +312,16 @@ public class LatchetRebounderItem extends Item {
 
     public void stopFiring(ServerPlayerEntity player, Hand hand) {
         ItemStack stack = player.getStackInHand(hand);
-        if (!(stack.getItem() instanceof LatchetRebounderItem) || !ModEnchantments.hasRapidFire(stack)) {
+        ItemStack cooldownSource = stack.getItem() instanceof LatchetRebounderItem item
+                && ModEnchantments.hasRapidFire(stack)
+                && item.isRapidBurstActive(stack)
+                ? stack
+                : findActiveRapidFireStack(player);
+        if (cooldownSource.isEmpty() || !(player.getWorld() instanceof ServerWorld world)) {
             return;
         }
 
-        int rapidTicks = getRapidFiringTicks(stack);
-        if (rapidTicks <= 0 || !(player.getWorld() instanceof ServerWorld world)) {
-            return;
-        }
-
-        beginRapidCooldown(stack, world.getTime());
+        beginRapidCooldown(player, cooldownSource, world.getTime());
     }
 
     public int getCurrentCharge(ItemStack stack) {
@@ -324,6 +336,39 @@ public class LatchetRebounderItem extends Item {
         long now = player.getWorld().getTime();
         reduceCharge(player.getMainHandStack(), now);
         reduceCharge(player.getOffHandStack(), now);
+    }
+
+    public static void interruptRapidFire(PlayerEntity player) {
+        if (player.getWorld().isClient()) {
+            return;
+        }
+
+        LatchetRebounderItem interruptingItem = null;
+        for (int slot = 0; slot < player.getInventory().size(); slot++) {
+            ItemStack stack = player.getInventory().getStack(slot);
+            if (stack.getItem() instanceof LatchetRebounderItem item
+                    && ModEnchantments.hasRapidFire(stack)
+                    && item.isRapidBurstActive(stack)) {
+                interruptingItem = item;
+                break;
+            }
+        }
+
+        if (interruptingItem == null) {
+            return;
+        }
+
+        long now = player.getWorld().getTime();
+        for (int slot = 0; slot < player.getInventory().size(); slot++) {
+            ItemStack stack = player.getInventory().getStack(slot);
+            if (stack.getItem() instanceof LatchetRebounderItem item && ModEnchantments.hasRapidFire(stack)) {
+                item.setRapidInterruptedTick(stack, now);
+                item.setRapidIntervalCarry(stack, 0.0D);
+            }
+        }
+
+        long interruptedNextFireTick = Math.max(interruptingItem.getSharedNextFireTick(player), now + RAPID_DAMAGE_INTERRUPT_DELAY_TICKS);
+        interruptingItem.setSharedNextFireTick(player, interruptedNextFireTick, now);
     }
 
     private static void reduceCharge(ItemStack stack, long worldTime) {
@@ -344,15 +389,34 @@ public class LatchetRebounderItem extends Item {
         }
     }
 
+    private static ItemStack findActiveRapidFireStack(PlayerEntity player) {
+        for (int slot = 0; slot < player.getInventory().size(); slot++) {
+            ItemStack stack = player.getInventory().getStack(slot);
+            if (stack.getItem() instanceof LatchetRebounderItem item
+                    && ModEnchantments.hasRapidFire(stack)
+                    && item.isRapidBurstActive(stack)) {
+                return stack;
+            }
+        }
+        return ItemStack.EMPTY;
+    }
+
     private void fireRapidShot(ServerWorld world, ServerPlayerEntity player, Hand hand, ItemStack stack,
                                FireSolution fireSolution, boolean railpiercer, long now) {
         int rapidTicks = getRapidFiringTicks(stack);
-        if (rapidTicks >= RAPID_MAX_FIRING_TICKS) {
-            beginRapidCooldown(stack, now);
+        long rapidStartTick = getRapidStartTick(stack);
+        if (rapidTicks <= 0 || rapidStartTick <= 0L || rapidStartTick > now) {
+            rapidStartTick = now;
+            setRapidStartTick(stack, rapidStartTick);
+        }
+
+        int rapidElapsedTicks = (int) MathHelper.clamp(now - rapidStartTick, 0L, RAPID_MAX_FIRING_TICKS);
+        if (rapidElapsedTicks >= RAPID_MAX_FIRING_TICKS) {
+            beginRapidCooldown(player, stack, now);
             return;
         }
 
-        double spreadProgress = MathHelper.clamp(rapidTicks / (double) RAPID_FULL_SPREAD_TICKS, 0.0D, 1.0D);
+        double spreadProgress = MathHelper.clamp(rapidElapsedTicks / (double) RAPID_FULL_SPREAD_TICKS, 0.0D, 1.0D);
         double yawSpread = MathHelper.lerp((float) spreadProgress, 0.2F, 24.0F);
         double pitchSpread = MathHelper.lerp((float) spreadProgress, 0.15F, 18.0F);
         Vec3d shotDirection = applySpread(
@@ -372,36 +436,38 @@ public class LatchetRebounderItem extends Item {
                 true
         );
 
-        int nextInterval = getRapidFireIntervalTicks(stack, rapidTicks);
-        int updatedRapidTicks = rapidTicks + nextInterval;
-        if (updatedRapidTicks >= RAPID_MAX_FIRING_TICKS) {
-            beginRapidCooldown(stack, now);
+        int nextInterval = getRapidFireIntervalTicks(stack, rapidElapsedTicks, now);
+        int updatedRapidTicks = Math.max(rapidTicks, rapidElapsedTicks) + nextInterval;
+        if ((rapidElapsedTicks + nextInterval) >= RAPID_MAX_FIRING_TICKS) {
+            beginRapidCooldown(player, stack, now);
         } else {
             setRapidFiringTicks(stack, updatedRapidTicks);
-            setNextFireTick(stack, now + nextInterval);
-            clearVisibleCooldown(stack, now);
+            setSharedNextFireTick(player, now + nextInterval, now);
         }
 
-        if ((rapidTicks & 1) == 0) {
-            playFireSound(world, player, rapidFireVolumeScale(rapidTicks), railpiercer, 0);
+        if ((rapidElapsedTicks & 1) == 0) {
+            playFireSound(world, player, rapidFireVolumeScale(rapidElapsedTicks), railpiercer, 0);
         }
     }
 
     private void fireLoadedShot(ServerWorld world, ServerPlayerEntity player, Hand hand, ItemStack stack,
                                 FireSolution fireSolution, boolean railpiercer, long now) {
         int projectileCount = railpiercer ? 1 : Math.max(1, getCurrentCharge(stack));
-        float damage = BASE_DAMAGE * (railpiercer ? RAILPIERCER_DAMAGE_MULTIPLIER : 1.0F);
+        int cooldown = railpiercer
+                ? getLoadedRailpiercerCooldownTicks()
+                : BASE_COOLDOWN_TICKS + (COOLDOWN_PER_CHARGE_TICKS * projectileCount);
+        float damage = railpiercer
+                ? RAILPIERCER_BASE_DAMAGE * RAILPIERCER_DAMAGE_MULTIPLIER * getRailpiercerRepeatDamageMultiplier(player, now)
+                : BASE_DAMAGE;
         fireLoadedBurst(world, player, hand, fireSolution.start(), fireSolution.direction(), damage, railpiercer, projectileCount);
 
         clearChargeState(stack);
         setRapidFiringTicks(stack, 0);
 
-        int cooldown = railpiercer
-                ? (BASE_COOLDOWN_TICKS + COOLDOWN_PER_CHARGE_TICKS) * 4
-                : BASE_COOLDOWN_TICKS + (COOLDOWN_PER_CHARGE_TICKS * projectileCount);
-        long cooldownEnd = now + cooldown;
-        setNextFireTick(stack, cooldownEnd);
-        setVisibleCooldown(stack, cooldownEnd, cooldown);
+        if (railpiercer) {
+            setSharedRailpiercerShotHistory(player, now, cooldown);
+        }
+        setSharedCooldown(player, stack, now, cooldown);
         playFireSound(world, player, 1.0F, railpiercer, projectileCount);
     }
 
@@ -416,7 +482,9 @@ public class LatchetRebounderItem extends Item {
         for (int projectileIndex = 0; projectileIndex < projectileCount; projectileIndex++) {
             double centeredIndex = projectileIndex - centerIndex;
             double yawOffset = centeredIndex * LOADED_BURST_YAW_STEP_DEGREES;
-            double pitchOffset = projectileCount >= 4 ? Math.signum(centeredIndex) * LOADED_BURST_PITCH_STEP_DEGREES : 0.0D;
+            double pitchOffset = projectileCount >= 4
+                    ? Math.signum(centeredIndex) * LOADED_BURST_PITCH_STEP_DEGREES
+                    : 0.0D;
             Vec3d shotDirection = applySpread(direction, yawOffset, pitchOffset);
             fireHitscanLine(world, player, hand, start, shotDirection, damage, railpiercer, false);
         }
@@ -432,10 +500,11 @@ public class LatchetRebounderItem extends Item {
         int remainingEntityPierces = railpiercer ? 1 : 0;
         int remainingBlockPierces = railpiercer ? 1 : 0;
         Set<Integer> ignoredEntities = new HashSet<>();
+        Set<BlockPos> ignoredBlocks = new HashSet<>();
 
         while (remainingRange > 0.15D) {
             Vec3d maxEnd = currentStart.add(normalizedDirection.multiply(remainingRange));
-            CollisionResult collision = findCollision(world, player, currentStart, maxEnd, ignoredEntities);
+            CollisionResult collision = findCollision(world, player, currentStart, maxEnd, ignoredEntities, ignoredBlocks);
 
             if (collision == null) {
                 RatchetNetworking.sendHitscanTrace(world, currentStart, maxEnd, traceColor);
@@ -477,9 +546,10 @@ public class LatchetRebounderItem extends Item {
                 double traveled = currentStart.distanceTo(collision.position());
                 if (remainingEntityPierces > 0) {
                     remainingEntityPierces--;
-                    traversedDistance += traveled + RAIL_ENTITY_SKIP_DISTANCE;
-                    remainingRange -= traveled + RAIL_ENTITY_SKIP_DISTANCE;
-                    currentStart = collision.position().add(normalizedDirection.multiply(RAIL_ENTITY_SKIP_DISTANCE));
+                    double advance = getEntityPierceAdvance(livingTarget, collision.position(), normalizedDirection, remainingRange - traveled);
+                    traversedDistance += traveled + advance;
+                    remainingRange -= traveled + advance;
+                    currentStart = collision.position().add(normalizedDirection.multiply(advance));
                     continue;
                 }
                 return;
@@ -498,9 +568,11 @@ public class LatchetRebounderItem extends Item {
                 double traveled = currentStart.distanceTo(collision.position());
                 if (remainingBlockPierces > 0) {
                     remainingBlockPierces--;
-                    traversedDistance += traveled + RAIL_BLOCK_SKIP_DISTANCE;
-                    remainingRange -= traveled + RAIL_BLOCK_SKIP_DISTANCE;
-                    currentStart = collision.position().add(normalizedDirection.multiply(RAIL_BLOCK_SKIP_DISTANCE));
+                    ignoredBlocks.add(collision.blockHit().getBlockPos().toImmutable());
+                    double advance = getBlockPierceAdvance(collision.blockHit().getBlockPos(), collision.position(), normalizedDirection, remainingRange - traveled);
+                    traversedDistance += traveled + advance;
+                    remainingRange -= traveled + advance;
+                    currentStart = collision.position().add(normalizedDirection.multiply(advance));
                     continue;
                 }
                 return;
@@ -508,14 +580,9 @@ public class LatchetRebounderItem extends Item {
         }
     }
 
-    private CollisionResult findCollision(ServerWorld world, PlayerEntity player, Vec3d start, Vec3d end, Set<Integer> ignoredEntities) {
-        BlockHitResult blockHit = world.raycast(new RaycastContext(
-                start,
-                end,
-                RaycastContext.ShapeType.COLLIDER,
-                RaycastContext.FluidHandling.NONE,
-                player
-        ));
+    private CollisionResult findCollision(ServerWorld world, PlayerEntity player, Vec3d start, Vec3d end, Set<Integer> ignoredEntities,
+                                          Set<BlockPos> ignoredBlocks) {
+        BlockHitResult blockHit = raycastBlocks(world, player, start, end, ignoredBlocks);
 
         double maxEntityDistance = blockHit.getType() == HitResult.Type.MISS
                 ? start.squaredDistanceTo(end)
@@ -543,6 +610,82 @@ public class LatchetRebounderItem extends Item {
         }
 
         return null;
+    }
+
+    private BlockHitResult raycastBlocks(ServerWorld world, PlayerEntity player, Vec3d start, Vec3d end, Set<BlockPos> ignoredBlocks) {
+        if (ignoredBlocks.isEmpty()) {
+            return world.raycast(new RaycastContext(
+                    start,
+                    end,
+                    RaycastContext.ShapeType.COLLIDER,
+                    RaycastContext.FluidHandling.NONE,
+                    player
+            ));
+        }
+
+        RaycastContext context = new RaycastContext(
+                start,
+                end,
+                RaycastContext.ShapeType.COLLIDER,
+                RaycastContext.FluidHandling.NONE,
+                player
+        );
+
+        return BlockView.raycast(start, end, context, (raycastContext, blockPos) -> {
+            if (ignoredBlocks.contains(blockPos)) {
+                return null;
+            }
+
+            VoxelShape shape = raycastContext.getBlockShape(world.getBlockState(blockPos), world, blockPos);
+            return shape.isEmpty() ? null : shape.raycast(start, end, blockPos);
+        }, raycastContext -> {
+            Vec3d delta = start.subtract(end);
+            return BlockHitResult.createMissed(end, Direction.getFacing(delta.x, delta.y, delta.z), BlockPos.ofFloored(end));
+        });
+    }
+
+    private double getEntityPierceAdvance(LivingEntity target, Vec3d impactPosition, Vec3d direction, double remainingRange) {
+        Box targetBox = target.getBoundingBox().expand(HITSCAN_ENTITY_HIT_RADIUS);
+        return getPierceAdvance(targetBox, impactPosition, direction, remainingRange, RAIL_ENTITY_EXIT_PADDING);
+    }
+
+    private double getBlockPierceAdvance(BlockPos blockPos, Vec3d impactPosition, Vec3d direction, double remainingRange) {
+        Box blockBox = new Box(
+                blockPos.getX(),
+                blockPos.getY(),
+                blockPos.getZ(),
+                blockPos.getX() + 1.0D,
+                blockPos.getY() + 1.0D,
+                blockPos.getZ() + 1.0D
+        );
+        return getPierceAdvance(blockBox, impactPosition, direction, remainingRange, RAIL_BLOCK_EXIT_PADDING);
+    }
+
+    private double getPierceAdvance(Box piercedBox, Vec3d impactPosition, Vec3d direction, double remainingRange, double padding) {
+        if (remainingRange <= 0.0D) {
+            return 0.0D;
+        }
+
+        double exitDistance = getBoxExitDistance(piercedBox.expand(1.0E-4D), impactPosition, direction);
+        double advance = Math.max(padding, exitDistance + padding);
+        return Math.min(remainingRange, advance);
+    }
+
+    private double getBoxExitDistance(Box box, Vec3d position, Vec3d direction) {
+        double exitDistance = Double.POSITIVE_INFINITY;
+        exitDistance = Math.min(exitDistance, getAxisExitDistance(position.x, box.minX, box.maxX, direction.x));
+        exitDistance = Math.min(exitDistance, getAxisExitDistance(position.y, box.minY, box.maxY, direction.y));
+        exitDistance = Math.min(exitDistance, getAxisExitDistance(position.z, box.minZ, box.maxZ, direction.z));
+        return Double.isFinite(exitDistance) ? Math.max(0.0D, exitDistance) : 0.0D;
+    }
+
+    private double getAxisExitDistance(double position, double min, double max, double direction) {
+        if (Math.abs(direction) < 1.0E-7D) {
+            return Double.POSITIVE_INFINITY;
+        }
+
+        double boundary = direction > 0.0D ? max : min;
+        return Math.max(0.0D, (boundary - position) / direction);
     }
 
     private FireSolution createFireSolution(ServerWorld world, ServerPlayerEntity player, Hand hand, double range) {
@@ -599,12 +742,67 @@ public class LatchetRebounderItem extends Item {
         return MAX_CHARGE;
     }
 
+    private int getLoadedRailpiercerCooldownTicks() {
+        return (BASE_COOLDOWN_TICKS + COOLDOWN_PER_CHARGE_TICKS) * RAILPIERCER_COOLDOWN_MULTIPLIER;
+    }
+
+    private float getRailpiercerRepeatDamageMultiplier(PlayerEntity player, long now) {
+        RailpiercerShotHistory history = getLatestRailpiercerShotHistory(player);
+        if (history.fireTick() <= 0L || history.cooldownTicks() <= 0) {
+            return 1.0F;
+        }
+
+        long halfDamageUntilTick = history.fireTick() + history.cooldownTicks();
+        long fullDamageTick = history.fireTick() + (history.cooldownTicks() * 2L);
+        if (now >= fullDamageTick) {
+            return 1.0F;
+        }
+
+        if (now <= halfDamageUntilTick) {
+            return RAILPIERCER_MIN_REPEAT_DAMAGE_MULTIPLIER;
+        }
+
+        float progress = MathHelper.clamp((now - halfDamageUntilTick) / (float) history.cooldownTicks(), 0.0F, 1.0F);
+        return MathHelper.lerp(progress, RAILPIERCER_MIN_REPEAT_DAMAGE_MULTIPLIER, 1.0F);
+    }
+
+    private RailpiercerShotHistory getLatestRailpiercerShotHistory(PlayerEntity player) {
+        long latestFireTick = 0L;
+        int latestCooldownTicks = 0;
+
+        for (int slot = 0; slot < player.getInventory().size(); slot++) {
+            ItemStack stack = player.getInventory().getStack(slot);
+            if (stack.getItem() instanceof LatchetRebounderItem item) {
+                long fireTick = item.getLastRailpiercerFireTick(stack);
+                if (fireTick > latestFireTick) {
+                    latestFireTick = fireTick;
+                    latestCooldownTicks = item.getLastRailpiercerCooldownTicks(stack);
+                }
+            }
+        }
+
+        return new RailpiercerShotHistory(latestFireTick, latestCooldownTicks);
+    }
+
     private int getRapidReleaseCooldown(ItemStack stack) {
         return ModEnchantments.hasRailpiercer(stack) ? RAPID_RELEASE_COOLDOWN_TICKS * 2 : RAPID_RELEASE_COOLDOWN_TICKS;
     }
 
-    private int getRapidFireIntervalTicks(ItemStack stack, int rapidTicks) {
-        double rampProgress = MathHelper.clamp(rapidTicks / (double) RAPID_SPEED_RAMP_TICKS, 0.0D, 1.0D);
+    private int getRapidFireIntervalTicks(ItemStack stack, int rapidTicks, long now) {
+        long interruptedTick = getRapidInterruptedTick(stack);
+        int rampTicks = rapidTicks;
+        int rampDuration = RAPID_SPEED_RAMP_TICKS;
+        if (interruptedTick > 0L) {
+            long interruptedElapsed = now - interruptedTick;
+            if (interruptedElapsed < RAPID_DAMAGE_RAMP_TICKS) {
+                rampTicks = (int) Math.max(0L, interruptedElapsed);
+                rampDuration = RAPID_DAMAGE_RAMP_TICKS;
+            } else {
+                clearRapidInterruptedTick(stack);
+            }
+        }
+
+        double rampProgress = MathHelper.clamp(rampTicks / (double) rampDuration, 0.0D, 1.0D);
         double smoothedProgress = rampProgress * rampProgress * (3.0D - (2.0D * rampProgress));
         double desiredRate = MathHelper.lerp((float) smoothedProgress, RAPID_MIN_RATE, RAPID_MAX_RATE);
         double desiredInterval = 20.0D / desiredRate;
@@ -719,6 +917,22 @@ public class LatchetRebounderItem extends Item {
         stack.getOrCreateNbt().putLong(NEXT_FIRE_TICK_KEY, Math.max(0L, tick));
     }
 
+    private long getLastRailpiercerFireTick(ItemStack stack) {
+        NbtCompound nbt = stack.getNbt();
+        return nbt == null ? 0L : nbt.getLong(LAST_RAILPIERCER_FIRE_TICK_KEY);
+    }
+
+    private int getLastRailpiercerCooldownTicks(ItemStack stack) {
+        NbtCompound nbt = stack.getNbt();
+        return nbt == null ? 0 : Math.max(0, nbt.getInt(LAST_RAILPIERCER_COOLDOWN_TICKS_KEY));
+    }
+
+    private void setRailpiercerShotHistory(ItemStack stack, long fireTick, int cooldownTicks) {
+        NbtCompound nbt = stack.getOrCreateNbt();
+        nbt.putLong(LAST_RAILPIERCER_FIRE_TICK_KEY, Math.max(0L, fireTick));
+        nbt.putInt(LAST_RAILPIERCER_COOLDOWN_TICKS_KEY, Math.max(1, cooldownTicks));
+    }
+
     private void setVisibleCooldown(ItemStack stack, long cooldownEndTick, int duration) {
         NbtCompound nbt = stack.getOrCreateNbt();
         nbt.putLong(VISIBLE_COOLDOWN_END_TICK_KEY, Math.max(0L, cooldownEndTick));
@@ -777,6 +991,31 @@ public class LatchetRebounderItem extends Item {
         stack.getOrCreateNbt().putInt(RAPID_FIRING_TICKS_KEY, ticks);
     }
 
+    private long getRapidStartTick(ItemStack stack) {
+        NbtCompound nbt = stack.getNbt();
+        return nbt == null ? 0L : nbt.getLong(RAPID_START_TICK_KEY);
+    }
+
+    private void setRapidStartTick(ItemStack stack, long tick) {
+        stack.getOrCreateNbt().putLong(RAPID_START_TICK_KEY, Math.max(0L, tick));
+    }
+
+    private long getRapidInterruptedTick(ItemStack stack) {
+        NbtCompound nbt = stack.getNbt();
+        return nbt == null ? 0L : nbt.getLong(RAPID_INTERRUPTED_TICK_KEY);
+    }
+
+    private void setRapidInterruptedTick(ItemStack stack, long tick) {
+        stack.getOrCreateNbt().putLong(RAPID_INTERRUPTED_TICK_KEY, Math.max(0L, tick));
+    }
+
+    private void clearRapidInterruptedTick(ItemStack stack) {
+        NbtCompound nbt = stack.getNbt();
+        if (nbt != null) {
+            nbt.remove(RAPID_INTERRUPTED_TICK_KEY);
+        }
+    }
+
     private double getRapidIntervalCarry(ItemStack stack) {
         NbtCompound nbt = stack.getNbt();
         if (nbt == null) {
@@ -799,8 +1038,67 @@ public class LatchetRebounderItem extends Item {
         stack.getOrCreateNbt().putDouble(RAPID_INTERVAL_CARRY_KEY, Math.min(carry, 1.0D));
     }
 
+    private void clearRapidState(ItemStack stack) {
+        setRapidFiringTicks(stack, 0);
+        setRapidIntervalCarry(stack, 0.0D);
+        NbtCompound nbt = stack.getNbt();
+        if (nbt != null) {
+            nbt.remove(RAPID_START_TICK_KEY);
+            nbt.remove(RAPID_INTERRUPTED_TICK_KEY);
+        }
+    }
+
     public boolean isCoolingDown(ItemStack stack, long worldTime) {
         return worldTime < getNextFireTick(stack);
+    }
+
+    public boolean isCoolingDown(PlayerEntity player, long worldTime) {
+        return player.getItemCooldownManager().isCoolingDown(this) || worldTime < getSharedNextFireTick(player);
+    }
+
+    private long getSharedNextFireTick(PlayerEntity player) {
+        long nextFireTick = 0L;
+        for (int slot = 0; slot < player.getInventory().size(); slot++) {
+            ItemStack stack = player.getInventory().getStack(slot);
+            if (stack.getItem() instanceof LatchetRebounderItem item) {
+                nextFireTick = Math.max(nextFireTick, item.getNextFireTick(stack));
+            }
+        }
+        return nextFireTick;
+    }
+
+    private void setSharedNextFireTick(PlayerEntity player, long nextFireTick, long now) {
+        for (int slot = 0; slot < player.getInventory().size(); slot++) {
+            ItemStack stack = player.getInventory().getStack(slot);
+            if (stack.getItem() instanceof LatchetRebounderItem item) {
+                item.setNextFireTick(stack, nextFireTick);
+                item.clearVisibleCooldown(stack, now);
+            }
+        }
+    }
+
+    private void setSharedRailpiercerShotHistory(PlayerEntity player, long fireTick, int cooldownTicks) {
+        for (int slot = 0; slot < player.getInventory().size(); slot++) {
+            ItemStack stack = player.getInventory().getStack(slot);
+            if (stack.getItem() instanceof LatchetRebounderItem item) {
+                item.setRailpiercerShotHistory(stack, fireTick, cooldownTicks);
+            }
+        }
+    }
+
+    private void setSharedCooldown(PlayerEntity player, ItemStack sourceStack, long now, int cooldown) {
+        player.getItemCooldownManager().set(this, cooldown);
+        long cooldownEnd = now + cooldown;
+        for (int slot = 0; slot < player.getInventory().size(); slot++) {
+            ItemStack stack = player.getInventory().getStack(slot);
+            if (stack.getItem() instanceof LatchetRebounderItem item) {
+                if (stack == sourceStack || item.isRapidBurstActive(stack)) {
+                    item.clearRapidState(stack);
+                }
+                item.setNextFireTick(stack, cooldownEnd);
+                item.setVisibleCooldown(stack, cooldownEnd, cooldown);
+            }
+        }
     }
 
     private boolean isRapidBurstActive(ItemStack stack) {
@@ -813,7 +1111,7 @@ public class LatchetRebounderItem extends Item {
             return false;
         }
 
-        if (!item.isRapidBurstActive(stack) && item.isCoolingDown(stack, world.getTime())) {
+        if (!item.isRapidBurstActive(stack) && item.isCoolingDown(player, world.getTime())) {
             return false;
         }
 
@@ -883,12 +1181,9 @@ public class LatchetRebounderItem extends Item {
         }
     }
 
-    private void beginRapidCooldown(ItemStack stack, long now) {
+    private void beginRapidCooldown(PlayerEntity player, ItemStack stack, long now) {
         int cooldown = getRapidReleaseCooldown(stack);
-        setRapidFiringTicks(stack, 0);
-        setRapidIntervalCarry(stack, 0.0D);
-        setNextFireTick(stack, now + cooldown);
-        setVisibleCooldown(stack, now + cooldown, cooldown);
+        setSharedCooldown(player, stack, now, cooldown);
     }
 
     private void playChargeGainSound(World world, PlayerEntity player, int newCharge) {
@@ -935,4 +1230,6 @@ public class LatchetRebounderItem extends Item {
     private record FireSolution(Vec3d start, Vec3d direction) {}
 
     private record CollisionResult(@Nullable EntityHitResult entityHit, @Nullable BlockHitResult blockHit, Vec3d position) {}
+
+    private record RailpiercerShotHistory(long fireTick, int cooldownTicks) {}
 }

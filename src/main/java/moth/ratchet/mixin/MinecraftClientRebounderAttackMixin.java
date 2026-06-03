@@ -34,7 +34,7 @@ public abstract class MinecraftClientRebounderAttackMixin {
 
         cir.setReturnValue(true);
         LatchetRebounderItem item = (LatchetRebounderItem) stack.getItem();
-        if (ModEnchantments.hasRapidFire(stack) || client.currentScreen != null || item.isCoolingDown(stack, client.world.getTime())) {
+        if (ModEnchantments.hasRapidFire(stack) || client.currentScreen != null || item.isCoolingDown(player, client.world.getTime())) {
             return;
         }
 

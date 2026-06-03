@@ -3,7 +3,7 @@
   "id": "ratchet",
   "version": "${version}",
   "name": "Ratchet",
-  "description": "Mechanical weapons that store energy to unleash devastating attacks",
+  "description": "Mechanical weapons that build charge to unleash devastating attacks",
   "authors": [
     "Moth"
   ],

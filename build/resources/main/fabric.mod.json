@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
   "id": "ratchet",
-  "version": "1.1.0",
+  "version": "1.1.2",
   "name": "Ratchet",
-  "description": "Mechanical weapons that store energy to unleash devastating attacks",
+  "description": "Mechanical weapons that build charge to unleash devastating attacks",
   "authors": [
     "Moth"
   ],

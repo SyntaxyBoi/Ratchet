@@ -40,8 +40,8 @@ public class RatchetClient implements ClientModInitializer {
         });
         ClientTickEvents.END_CLIENT_TICK.register(LatchetRebounderInputHandler::tick);
         ClientTickEvents.END_CLIENT_TICK.register(LatchetRebounderTraceRenderer::tick);
+        WorldRenderEvents.AFTER_ENTITIES.register(RatchetIndexerAnchorRenderer::render);
         WorldRenderEvents.AFTER_TRANSLUCENT.register(LatchetRebounderTraceRenderer::render);
-        WorldRenderEvents.AFTER_TRANSLUCENT.register(RatchetIndexerAnchorRenderer::render);
         ClientPlayNetworking.registerGlobalReceiver(RatchetNetworking.LATCHET_REBOUNDER_TRACE_ID, (client, handler, buf, responseSender) -> {
             Vec3d start = new Vec3d(buf.readDouble(), buf.readDouble(), buf.readDouble());
             Vec3d end = new Vec3d(buf.readDouble(), buf.readDouble(), buf.readDouble());

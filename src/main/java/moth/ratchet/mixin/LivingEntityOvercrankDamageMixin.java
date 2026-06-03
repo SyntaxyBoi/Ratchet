@@ -45,6 +45,7 @@ public abstract class LivingEntityOvercrankDamageMixin {
             LatchetRebounderItem.loseHeldCharge(player);
         }
 
+        LatchetRebounderItem.interruptRapidFire(player);
         RatchetIndexerItem.applyDirectDamageCooldown(player, source, amount);
     }
 }
